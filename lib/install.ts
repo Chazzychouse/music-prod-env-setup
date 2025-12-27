@@ -10,8 +10,7 @@ import * as path from 'path';
 export interface InstallItem {
     name: string;
     path: string | string[]; // Single path or array of paths for multiple installers
-    installedAppNames?: string[]; // Names to check in registry for verification
-    pluginNames?: string[]; // Names to check in all plugin directories (VST, AAX, etc.) for verification
+    installedAppNames?: string[]; // Names to check in registry and plugin directories (VST, AAX, etc.) for verification
     requiresManualInstallation?: boolean;
 }
 
@@ -482,8 +481,7 @@ async function checkPlugins(pluginNames: string[]): Promise<boolean> {
  * Returns true if any of the provided app names are found in the registry or plugins are found
  */
 async function verifyInstallation(
-    installedAppNames?: string[],
-    pluginNames?: string[]
+    installedAppNames?: string[]
 ): Promise<boolean> {
     // Check registry if app names provided
     let registryCheck = false;
@@ -508,8 +506,8 @@ async function verifyInstallation(
         }
     }
 
-    // Check plugins in all directories (VST, AAX, etc.) if plugin names provided
-    const pluginCheck = await checkPlugins(pluginNames || []);
+    // Check plugins in all directories (VST, AAX, etc.) using the same app names
+    const pluginCheck = await checkPlugins(installedAppNames || []);
 
     // Return true if any check passes
     return registryCheck || pluginCheck;
@@ -528,9 +526,8 @@ export async function installSingle(
     const installerPaths = Array.isArray(item.path) ? item.path : [item.path];
 
     // Check if software is already installed before attempting installation
-    if ((item.installedAppNames && item.installedAppNames.length > 0) ||
-        (item.pluginNames && item.pluginNames.length > 0)) {
-        const isAlreadyInstalled = await verifyInstallation(item.installedAppNames, item.pluginNames);
+    if (item.installedAppNames && item.installedAppNames.length > 0) {
+        const isAlreadyInstalled = await verifyInstallation(item.installedAppNames);
         if (isAlreadyInstalled) {
             onStatusChange?.(item.name, 'skipped');
             return {
@@ -572,11 +569,10 @@ export async function installSingle(
 
         // After all installers complete (user closed all wizards),
         // verify if the installation was successful
-        if ((item.installedAppNames && item.installedAppNames.length > 0) ||
-            (item.pluginNames && item.pluginNames.length > 0)) {
+        if (item.installedAppNames && item.installedAppNames.length > 0) {
             // Wait a moment for registry to update after installers close
             await new Promise(resolve => setTimeout(resolve, 2000));
-            const isInstalled = await verifyInstallation(item.installedAppNames, item.pluginNames);
+            const isInstalled = await verifyInstallation(item.installedAppNames);
             if (isInstalled) {
                 onStatusChange?.(item.name, 'completed');
                 return {
@@ -620,9 +616,8 @@ export async function installSingle(
             // If installation reported failure or timeout, verify if it actually succeeded
             if (!result.success) {
                 // Check if the program is actually installed despite the failure report
-                if ((item.installedAppNames && item.installedAppNames.length > 0) ||
-                    (item.pluginNames && item.pluginNames.length > 0)) {
-                    const isInstalled = await verifyInstallation(item.installedAppNames, item.pluginNames);
+                if (item.installedAppNames && item.installedAppNames.length > 0) {
+                    const isInstalled = await verifyInstallation(item.installedAppNames);
                     if (isInstalled) {
                         // Program is installed - mark as successful despite timeout/failure
                         onStatusChange?.(item.name, 'completed');
@@ -643,9 +638,8 @@ export async function installSingle(
         // If we had errors and verification didn't pass, mark as failed
         if (lastError) {
             // Final verification check
-            if ((item.installedAppNames && item.installedAppNames.length > 0) ||
-                (item.pluginNames && item.pluginNames.length > 0)) {
-                const isInstalled = await verifyInstallation(item.installedAppNames, item.pluginNames);
+            if (item.installedAppNames && item.installedAppNames.length > 0) {
+                const isInstalled = await verifyInstallation(item.installedAppNames);
                 if (isInstalled) {
                     onStatusChange?.(item.name, 'completed');
                     return {
@@ -675,9 +669,8 @@ export async function installSingle(
         };
     } catch (error) {
         // On exception, also verify installation if app names are provided
-        if ((item.installedAppNames && item.installedAppNames.length > 0) ||
-            (item.pluginNames && item.pluginNames.length > 0)) {
-            const isInstalled = await verifyInstallation(item.installedAppNames, item.pluginNames);
+        if (item.installedAppNames && item.installedAppNames.length > 0) {
+            const isInstalled = await verifyInstallation(item.installedAppNames);
             if (isInstalled) {
                 onStatusChange?.(item.name, 'completed');
                 return {

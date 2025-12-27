@@ -41,15 +41,14 @@ export async function downloadAndInstall(
     // Phase 2: Install all successfully downloaded files
     console.log('\nStarting installations...\n');
 
-    // Map download results to install items, including installedAppNames and pluginNames from urls.json
+    // Map download results to install items, including installedAppNames from urls.json
     const installItems: InstallItem[] = successful.map(d => {
-        // Find the corresponding item in urls.json to get installedAppNames and pluginNames
+        // Find the corresponding item in urls.json to get installedAppNames
         const urlItem = urls.urls.find(item => item.name === d.name);
         return {
             name: d.name,
             path: d.path,
             installedAppNames: urlItem?.installedAppNames,
-            pluginNames: urlItem?.pluginNames,
             requiresManualInstallation: urlItem?.requiresManualInstallation ?? false,
         };
     });
@@ -125,30 +124,23 @@ export async function listDownloads(downloadDir: string): Promise<void> {
 
 /**
  * Uninstalls all programs matching installedAppNames from urls.json
- * Also removes plugins matching pluginNames from all plugin directories
+ * Also removes plugins matching installedAppNames from all plugin directories
  */
 export async function uninstallAllMatching(
     pattern?: string,
     options: { silent?: boolean; timeout?: number; concurrent?: boolean } = {},
 ): Promise<void> {
-    // Extract app names and plugin names we care about from urls.json
+    // Extract app names we care about from urls.json
     const caredAboutNames = new Set<string>();
-    const caredAboutPluginNames = new Set<string>();
-    const urlItemMap = new Map<string, { installedAppNames?: string[]; pluginNames?: string[] }>();
+    const urlItemMap = new Map<string, { installedAppNames?: string[] }>();
 
     urls.urls.forEach(item => {
         if (item.installedAppNames && Array.isArray(item.installedAppNames)) {
             item.installedAppNames.forEach(name => caredAboutNames.add(name));
-        }
-        if (item.pluginNames && Array.isArray(item.pluginNames)) {
-            item.pluginNames.forEach(name => caredAboutPluginNames.add(name));
-        }
-        // Map app names to their URL item for plugin lookup
-        if (item.installedAppNames) {
+            // Map app names to their URL item
             item.installedAppNames.forEach(appName => {
                 urlItemMap.set(appName.toLowerCase(), {
-                    installedAppNames: item.installedAppNames,
-                    pluginNames: item.pluginNames
+                    installedAppNames: item.installedAppNames
                 });
             });
         }
@@ -174,26 +166,13 @@ export async function uninstallAllMatching(
         );
     }
 
-    // Collect plugin names to remove
+    // Collect plugin names to remove (using the same installedAppNames)
     const pluginsToRemove = new Set<string>();
 
-    // First, collect plugins based on programs being uninstalled
-    programsToUninstall.forEach(program => {
-        const programLower = program.toLowerCase();
-        // Find matching URL item
-        for (const [appName, urlItem] of urlItemMap.entries()) {
-            if (programLower === appName || programLower.includes(appName)) {
-                if (urlItem.pluginNames) {
-                    urlItem.pluginNames.forEach(pluginName => pluginsToRemove.add(pluginName));
-                }
-            }
-        }
-    });
-
-    // Also check for installed plugins that match our cared-about names
+    // Check for installed plugins that match our cared-about names
     // This handles cases where only plugins are installed (no registry entry)
-    if (caredAboutPluginNames.size > 0) {
-        const installedPlugins = await listInstalledPlugins(Array.from(caredAboutPluginNames));
+    if (caredAboutNames.size > 0) {
+        const installedPlugins = await listInstalledPlugins(Array.from(caredAboutNames));
         if (pattern) {
             // If pattern provided, filter by pattern
             installedPlugins.forEach(pluginName => {
@@ -307,15 +286,11 @@ export async function listInstalled(pattern?: string): Promise<void> {
         // Show all programs without filtering
         programs = allPrograms;
     } else {
-        // Extract app names and plugin names we care about from urls.json
+        // Extract app names we care about from urls.json
         const caredAboutNames = new Set<string>();
-        const caredAboutPluginNames = new Set<string>();
         urls.urls.forEach(item => {
             if (item.installedAppNames && Array.isArray(item.installedAppNames)) {
                 item.installedAppNames.forEach(name => caredAboutNames.add(name));
-            }
-            if (item.pluginNames && Array.isArray(item.pluginNames)) {
-                item.pluginNames.forEach(name => caredAboutPluginNames.add(name));
             }
         });
 
@@ -330,8 +305,8 @@ export async function listInstalled(pattern?: string): Promise<void> {
         );
 
         // Also check for plugins and add them to the list
-        if (caredAboutPluginNames.size > 0) {
-            const installedPlugins = await listInstalledPlugins(Array.from(caredAboutPluginNames));
+        if (caredAboutNames.size > 0) {
+            const installedPlugins = await listInstalledPlugins(Array.from(caredAboutNames));
             // Add plugin names to the programs list
             installedPlugins.forEach(pluginName => {
                 programs.push(pluginName);

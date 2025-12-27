@@ -45,7 +45,7 @@ export async function executeCommand(command: string, args: string[]): Promise<b
 
             case 'uninstall':
             case 'u':
-                // Uninstall programs matching installedAppNames from urls.json
+                // Uninstall programs and plugins matching installedAppNames from urls.json
                 // Optional pattern argument to filter which programs to uninstall
                 const uninstallPattern = args.find(arg => !arg.startsWith('--')) || undefined;
                 const flagArgs = args.filter(arg => arg.startsWith('--'));
@@ -123,7 +123,7 @@ Commands:
   list-downloads, ld      List all downloaded installer files
                           Usage: list-downloads [download-dir]
 
-  uninstall, u            Uninstall programs matching installedAppNames from urls.json
+  uninstall, u            Uninstall programs and plugins matching installedAppNames from urls.json
                           Usage: uninstall [pattern] [options]
                           Options:
                             [pattern]           Optional pattern to filter which programs to uninstall
@@ -132,7 +132,7 @@ Commands:
                             --timeout <ms>      Set timeout in milliseconds
                           Example: uninstall "fl studio"  (uninstalls only programs matching "fl studio")
                           Example: uninstall --concurrent (uninstalls all programs concurrently)
-                          Example: uninstall              (uninstalls all programs matching installedAppNames)
+                          Example: uninstall              (uninstalls all programs and plugins matching installedAppNames)
 
   list-installed, li      List installed programs
                           Usage: list-installed [pattern]
