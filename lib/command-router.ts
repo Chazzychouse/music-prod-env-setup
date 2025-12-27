@@ -111,9 +111,6 @@ Interactive Mode:
   Run "npm start" to enter interactive mode. Commands can be entered repeatedly.
   Type "exit" or "quit" to exit.
 
-Single Command Mode:
-  Run "npm start [command] [options]" to execute a single command and exit.
-
 Commands:
   install, i              Download and install all items from urls.json
                           Options:

@@ -5,10 +5,13 @@ import { executeCommand } from './lib/command-router';
 // Main Entry Point
 // ============================================================================
 
-/**
- * Creates and runs the REPL loop
- */
-function startREPL(): void {
+/* Extension:
+    - Implement a file sync for projects and raw audio files
+    - GUI for install functionality, verification, sampling, etc.
+    - Integrate the installer and new apps
+*/
+
+function main(): void {
     createREPL(executeCommand, {
         prompt: '> ',
         welcomeMessage: 'Music Production Installer\nType "help" for available commands or "exit" to quit.\n',
@@ -18,24 +21,4 @@ function startREPL(): void {
     });
 }
 
-async function main(): Promise<void> {
-    // If command line arguments are provided, run in single-command mode
-    const command = process.argv[2];
-    const args = stripPowerShellEscapeCharacters();
-
-    if (command) {
-        // Single command mode (backward compatibility)
-        const shouldContinue = await executeCommand(command, args);
-        process.exit(shouldContinue ? 0 : 0);
-    } else {
-        // REPL mode - default behavior
-        startREPL();
-    }
-}
-
-function stripPowerShellEscapeCharacters(): string[] {
-    const rawArgs = process.argv.slice(3);
-    return rawArgs.map(arg => arg.replace(/\^/g, ''));
-}
-
-main().catch(console.error);
+main();
