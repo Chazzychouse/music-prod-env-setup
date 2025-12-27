@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as fs from 'fs';
 import * as child_process from 'child_process';
 import { promisify } from 'util';
 import { executeProcess, ProcessResponse } from './install';
@@ -87,10 +88,18 @@ async function killProcessesUsingFile(filePath: string): Promise<{ killed: numbe
 export interface UninstallOptions {
     silent?: boolean;
     timeout?: number;
+    concurrent?: boolean;
     onProgress?: (elapsed: number) => void;
+    onStatusChange?: (name: string, status: 'pending' | 'uninstalling' | 'completed' | 'failed', elapsed?: number) => void;
     // Dependency injection for testing
     registryAccess?: IRegistryAccess;
     processExecutor?: IProcessExecutor;
+}
+
+export interface UninstallResult {
+    name: string;
+    success: boolean;
+    error?: string;
 }
 
 // ============================================================================
@@ -105,15 +114,24 @@ export async function deleteDownload(
     filePath: string,
     fileSystem?: IFileSystem,
 ): Promise<{ success: boolean; error?: Error }> {
-    const fs = fileSystem || new NodeFileSystem();
+    const fileSys = fileSystem || new NodeFileSystem();
 
     try {
-        if (!fs.existsSync(filePath)) {
+        if (!fileSys.existsSync(filePath)) {
             return { success: false, error: new Error(`File does not exist: ${filePath}`) };
         }
 
-        fs.unlinkSync(filePath);
-        return { success: true };
+        // Check if it's a directory
+        const stats = fs.statSync(filePath);
+        if (stats.isDirectory()) {
+            // Remove directory recursively
+            fs.rmSync(filePath, { recursive: true, force: true });
+            return { success: true };
+        } else {
+            // It's a file, use unlinkSync
+            fileSys.unlinkSync(filePath);
+            return { success: true };
+        }
     } catch (error) {
         const err = error as NodeJS.ErrnoException;
 
@@ -127,8 +145,13 @@ export async function deleteDownload(
                 await new Promise(resolve => setTimeout(resolve, 1000));
 
                 // Retry deletion
-                if (fs.existsSync(filePath)) {
-                    fs.unlinkSync(filePath);
+                if (fileSys.existsSync(filePath)) {
+                    const stats = fs.statSync(filePath);
+                    if (stats.isDirectory()) {
+                        fs.rmSync(filePath, { recursive: true, force: true });
+                    } else {
+                        fileSys.unlinkSync(filePath);
+                    }
                     return { success: true };
                 } else {
                     // File was deleted by the process cleanup
@@ -175,20 +198,39 @@ export async function deleteAllDownloads(
     pattern?: string,
     fileSystem?: IFileSystem,
 ): Promise<DeleteResult[]> {
-    const fs = fileSystem || new NodeFileSystem();
+    const fileSys = fileSystem || new NodeFileSystem();
 
     try {
-        if (!fs.existsSync(downloadDir)) {
+        if (!fileSys.existsSync(downloadDir)) {
             return [];
         }
 
-        const files = fs.readdirSync(downloadDir);
-        const filesToDelete = pattern
-            ? files.filter(f => f.includes(pattern))
-            : files.filter(f => f.endsWith('.exe'));
+        const items = fileSys.readdirSync(downloadDir);
+        let itemsToDelete: string[];
 
-        const filePaths = filesToDelete.map(f => path.join(downloadDir, f));
-        return await deleteDownloads(filePaths, fileSystem);
+        if (pattern) {
+            // If pattern provided, filter by pattern
+            itemsToDelete = items.filter(item => item.includes(pattern));
+        } else {
+            // If no pattern, include .exe files, .zip files, and directories
+            itemsToDelete = items.filter(item => {
+                const itemPath = path.join(downloadDir, item);
+                // Check if it's a directory
+                try {
+                    const stats = fs.statSync(itemPath);
+                    if (stats.isDirectory()) {
+                        return true;
+                    }
+                } catch {
+                    // If we can't stat it, skip it
+                }
+                // Check if it's a .exe or .zip file
+                return item.endsWith('.exe') || item.endsWith('.zip');
+            });
+        }
+
+        const itemPaths = itemsToDelete.map(f => path.join(downloadDir, f));
+        return await deleteDownloads(itemPaths, fileSystem);
     } catch (error) {
         throw new Error(`Failed to delete downloads from ${downloadDir}: ${(error as Error).message}`);
     }
@@ -196,25 +238,45 @@ export async function deleteAllDownloads(
 
 /**
  * Gets all downloaded files from a directory
+ * Includes .exe files, .zip files, and folders
  */
 export function getDownloadedFiles(
     downloadDir: string,
     pattern?: string,
     fileSystem?: IFileSystem,
 ): string[] {
-    const fs = fileSystem || new NodeFileSystem();
+    const fileSys = fileSystem || new NodeFileSystem();
 
     try {
-        if (!fs.existsSync(downloadDir)) {
+        if (!fileSys.existsSync(downloadDir)) {
             return [];
         }
 
-        const files = fs.readdirSync(downloadDir);
-        const filteredFiles = pattern
-            ? files.filter(f => f.includes(pattern))
-            : files.filter(f => f.endsWith('.exe'));
+        const items = fileSys.readdirSync(downloadDir);
+        let filteredItems: string[];
 
-        return filteredFiles.map(f => path.join(downloadDir, f));
+        if (pattern) {
+            // If pattern provided, filter by pattern
+            filteredItems = items.filter(item => item.includes(pattern));
+        } else {
+            // If no pattern, include .exe files, .zip files, and directories
+            filteredItems = items.filter(item => {
+                const itemPath = path.join(downloadDir, item);
+                // Check if it's a directory using Node.js fs directly
+                try {
+                    const stats = fs.statSync(itemPath);
+                    if (stats.isDirectory()) {
+                        return true;
+                    }
+                } catch {
+                    // If we can't stat it, skip it
+                }
+                // Check if it's a .exe or .zip file
+                return item.endsWith('.exe') || item.endsWith('.zip');
+            });
+        }
+
+        return filteredItems.map(f => path.join(downloadDir, f));
     } catch (error) {
         throw new Error(`Failed to read downloads directory ${downloadDir}: ${(error as Error).message}`);
     }
@@ -280,54 +342,129 @@ export async function uninstallByName(
         return { success: false, error: `Could not find uninstall string for ${programName}` };
     }
 
-    // Extract the executable and arguments
-    // Handle both quoted and unquoted paths
-    let executable: string;
-    let existingArgsStr: string;
+    // Check if this is an MSI-based uninstall
+    // MSI uninstall strings can be:
+    // - msiexec.exe /x {ProductCode}
+    // - msiexec.exe /x "path\to\file.msi"
+    // - "path\to\file.msi" (just the MSI file path)
+    const isMsiUninstall = uninstallString.toLowerCase().includes('msiexec') ||
+        uninstallString.toLowerCase().endsWith('.msi') ||
+        /\.msi\s/i.test(uninstallString);
 
-    if (uninstallString.startsWith('"')) {
-        // Quoted path: "C:\Program Files\..." /arg1 /arg2
-        const endQuote = uninstallString.indexOf('"', 1);
-        if (endQuote === -1) {
-            return { success: false, error: `Invalid uninstall string format: ${uninstallString}` };
-        }
-        executable = uninstallString.substring(1, endQuote);
-        existingArgsStr = uninstallString.substring(endQuote + 1).trim();
-    } else {
-        // Unquoted path: try to find where executable ends and args begin
-        // Look for common argument patterns like /S, /SILENT, etc. or space-separated args
-        // For unquoted paths with spaces, we need to be smarter
-        // Common pattern: C:\Program Files\...\uninstall.exe /S
-        // We'll try to find the .exe or similar extension first
-        const exeMatch = uninstallString.match(/^(.+\.(exe|msi|bat|cmd))(?:\s+(.*))?$/i);
-        if (exeMatch) {
-            executable = exeMatch[1];
-            existingArgsStr = exeMatch[3] || '';
-        } else {
-            // Fallback: split on first space (may not work for paths with spaces)
-            const spaceIndex = uninstallString.indexOf(' ');
-            if (spaceIndex === -1) {
-                executable = uninstallString;
-                existingArgsStr = '';
+    let executable: string;
+    let args: string[];
+
+    if (isMsiUninstall) {
+        // Handle MSI uninstall
+        if (uninstallString.toLowerCase().includes('msiexec')) {
+            // Parse msiexec command: msiexec.exe /x {ProductCode} or msiexec.exe /x "path.msi"
+            // Handle both "msiexec.exe" and just "msiexec"
+            const msiMatch = uninstallString.match(/msiexec(?:\.exe)?\s+(.+)/i);
+            if (msiMatch) {
+                executable = 'msiexec.exe';
+                let existingArgsStr = msiMatch[1].trim();
+
+                // Replace /i with /x if present (install flag -> uninstall flag)
+                existingArgsStr = existingArgsStr.replace(/\/([ix])(\s|$|\{)/gi, (match, flag, suffix) => {
+                    return flag.toLowerCase() === 'i' ? '/x' + suffix : match;
+                });
+
+                // Simple argument parsing - split by spaces but preserve quoted strings and braces
+                const parsedArgs: string[] = [];
+                const regex = /(?:[^\s"]+|"[^"]*"|\{[^}]*\})+/g;
+                let match;
+                while ((match = regex.exec(existingArgsStr)) !== null) {
+                    parsedArgs.push(match[0].trim());
+                }
+
+                // Ensure /x is present (for uninstall)
+                const hasX = parsedArgs.some(arg => {
+                    const argLower = arg.toLowerCase();
+                    return argLower === '/x' || argLower.startsWith('/x{') || argLower.startsWith('/x"');
+                });
+
+                if (!hasX) {
+                    // Add /x at the beginning
+                    parsedArgs.unshift('/x');
+                }
+
+                // Add silent flag if needed (MSI uses /qn, /qb, /qr, not /S)
+                const hasQuietFlag = parsedArgs.some(arg => {
+                    const argLower = arg.toLowerCase();
+                    return argLower === '/qn' || argLower === '/qb' || argLower === '/qr' ||
+                        argLower.startsWith('/q') && argLower.length === 3;
+                });
+                if (silent && !hasQuietFlag) {
+                    parsedArgs.push('/qn', '/norestart');
+                } else if (!silent && !hasQuietFlag) {
+                    parsedArgs.push('/qb');
+                }
+
+                args = parsedArgs;
             } else {
-                executable = uninstallString.substring(0, spaceIndex);
-                existingArgsStr = uninstallString.substring(spaceIndex + 1).trim();
+                return { success: false, error: `Invalid MSI uninstall string format: ${uninstallString}` };
+            }
+        } else {
+            // Just an MSI file path - need to use msiexec.exe /x
+            const msiPath = uninstallString.trim().replace(/^["']|["']$/g, ''); // Remove quotes
+            executable = 'msiexec.exe';
+            args = ['/x', msiPath];
+            if (silent) {
+                args.push('/qn', '/norestart');
+            } else {
+                args.push('/qb');
             }
         }
+    } else {
+        // Handle non-MSI uninstall (regular executables)
+        // Extract the executable and arguments
+        // Handle both quoted and unquoted paths
+        let existingArgsStr: string;
+
+        if (uninstallString.startsWith('"')) {
+            // Quoted path: "C:\Program Files\..." /arg1 /arg2
+            const endQuote = uninstallString.indexOf('"', 1);
+            if (endQuote === -1) {
+                return { success: false, error: `Invalid uninstall string format: ${uninstallString}` };
+            }
+            executable = uninstallString.substring(1, endQuote);
+            existingArgsStr = uninstallString.substring(endQuote + 1).trim();
+        } else {
+            // Unquoted path: try to find where executable ends and args begin
+            // Look for common argument patterns like /S, /SILENT, etc. or space-separated args
+            // For unquoted paths with spaces, we need to be smarter
+            // Common pattern: C:\Program Files\...\uninstall.exe /S
+            // We'll try to find the .exe or similar extension first
+            const exeMatch = uninstallString.match(/^(.+\.(exe|bat|cmd))(?:\s+(.*))?$/i);
+            if (exeMatch) {
+                executable = exeMatch[1];
+                existingArgsStr = exeMatch[3] || '';
+            } else {
+                // Fallback: split on first space (may not work for paths with spaces)
+                const spaceIndex = uninstallString.indexOf(' ');
+                if (spaceIndex === -1) {
+                    executable = uninstallString;
+                    existingArgsStr = '';
+                } else {
+                    executable = uninstallString.substring(0, spaceIndex);
+                    existingArgsStr = uninstallString.substring(spaceIndex + 1).trim();
+                }
+            }
+        }
+
+        // Parse existing arguments (split by spaces, but preserve quoted strings)
+        const existingArgs = existingArgsStr ? existingArgsStr.split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/).filter(arg => arg.trim()) : [];
+
+        // Add silent flags if not already present (for non-MSI installers)
+        const hasSilentFlag = existingArgs.some(arg =>
+            arg.includes('/S') || arg.includes('/SILENT') || arg.includes('/VERYSILENT'),
+        );
+        const silentArgs = silent && !hasSilentFlag
+            ? ['/S', '/SILENT', '/VERYSILENT']
+            : [];
+
+        args = [...existingArgs, ...silentArgs];
     }
-
-    // Parse existing arguments (split by spaces, but preserve quoted strings)
-    const existingArgs = existingArgsStr ? existingArgsStr.split(/\s+(?=(?:[^"]*"[^"]*")*[^"]*$)/).filter(arg => arg.trim()) : [];
-
-    // Add silent flags if not already present
-    const hasSilentFlag = existingArgs.some(arg =>
-        arg.includes('/S') || arg.includes('/SILENT') || arg.includes('/VERYSILENT'),
-    );
-    const silentArgs = silent && !hasSilentFlag
-        ? ['/S', '/SILENT', '/VERYSILENT']
-        : [];
-
-    const args = [...existingArgs, ...silentArgs];
 
     // Execute the uninstall process
     const processResult = await executeProcess(executable, args, {
@@ -338,28 +475,46 @@ export async function uninstallByName(
 
     // Verify uninstall success by checking if the program is still in the registry
     // Some uninstallers return non-zero exit codes even when they succeed
-    // Wait a brief moment for registry to update
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Use retry logic with exponential backoff to handle registry update delays
+    // This is especially important for concurrent uninstalls where registry queries
+    // might conflict or see stale data
 
-    const stillInstalled = await findUninstallString(programName, registryAccess);
+    const maxRetries = 5;
+    const initialDelay = 500; // Start with 500ms
+    let delay = initialDelay;
 
-    if (!stillInstalled) {
-        // Program is no longer in registry - uninstall succeeded regardless of exit code
-        return { success: true };
-    }
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+        // Wait before checking registry (staggered delay to avoid conflicts)
+        await new Promise(resolve => setTimeout(resolve, delay));
 
-    // Program is still installed - check if process reported success
-    if (processResult.success) {
-        // Process reported success but program still exists - might need more time
-        // Wait a bit longer and check again
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        const stillInstalledAfterWait = await findUninstallString(programName, registryAccess);
-        if (!stillInstalledAfterWait) {
+        const stillInstalled = await findUninstallString(programName, registryAccess);
+
+        if (!stillInstalled) {
+            // Program is no longer in registry - uninstall succeeded regardless of exit code
             return { success: true };
+        }
+
+        // If process reported failure and we've checked at least once, don't retry
+        if (!processResult.success && attempt >= 1) {
+            break;
+        }
+
+        // Exponential backoff: 500ms, 1000ms, 2000ms, 3000ms, 3000ms
+        if (attempt < maxRetries - 1) {
+            delay = Math.min(initialDelay * Math.pow(2, attempt + 1), 3000);
         }
     }
 
-    // Program is still installed and process reported failure
+    // Program is still installed after all retries
+    // If process reported success, registry might just be slow to update
+    // Return success if process succeeded, otherwise return failure
+    if (processResult.success) {
+        // Process succeeded but registry still shows it - might be a false positive
+        // or registry is very slow. Trust the process result.
+        return { success: true };
+    }
+
+    // Process reported failure and registry still shows it - uninstall failed
     return processResult;
 }
 
@@ -382,6 +537,156 @@ export async function uninstallByPath(
 }
 
 /**
+ * Uninstalls a single program by name
+ * Wraps uninstallByName with proper error handling
+ */
+async function uninstallSingle(
+    programName: string,
+    options: UninstallOptions = {},
+): Promise<UninstallResult> {
+    const { onStatusChange, onProgress } = options;
+
+    try {
+        onStatusChange?.(programName, 'uninstalling');
+
+        const result = await uninstallByName(programName, {
+            ...options,
+            onProgress: (elapsed) => {
+                // Update status with elapsed time for progress display
+                onStatusChange?.(programName, 'uninstalling', elapsed);
+                onProgress?.(elapsed);
+            },
+        });
+
+        if (result.success) {
+            onStatusChange?.(programName, 'completed');
+        } else {
+            onStatusChange?.(programName, 'failed');
+        }
+
+        return {
+            name: programName,
+            success: result.success,
+            error: result.error,
+        };
+    } catch (error) {
+        // Catch any unexpected errors (e.g., from registry access, process execution)
+        const errorMessage = error instanceof Error
+            ? error.message
+            : typeof error === 'string'
+                ? error
+                : 'Uninstallation failed with unknown error';
+
+        onStatusChange?.(programName, 'failed');
+
+        return {
+            name: programName,
+            success: false,
+            error: errorMessage,
+        };
+    }
+}
+
+/**
+ * Uninstalls programs sequentially
+ */
+export async function uninstallSequentially(
+    programNames: string[],
+    options: UninstallOptions = {},
+): Promise<UninstallResult[]> {
+    const { onStatusChange } = options;
+    const results: UninstallResult[] = [];
+
+    programNames.forEach(name => {
+        onStatusChange?.(name, 'pending');
+    });
+
+    for (const programName of programNames) {
+        const result = await uninstallSingle(programName, options);
+        results.push(result);
+    }
+
+    return results;
+}
+
+/**
+ * Uninstalls programs concurrently
+ * Uses staggered delays to prevent registry query conflicts
+ */
+export async function uninstallConcurrently(
+    programNames: string[],
+    options: UninstallOptions = {},
+): Promise<UninstallResult[]> {
+    const { onStatusChange } = options;
+
+    programNames.forEach(name => {
+        onStatusChange?.(name, 'pending');
+    });
+
+    // Stagger the start of each uninstall to reduce registry query conflicts
+    // Each uninstall starts with a small random delay (0-200ms) to spread out registry queries
+    const settledResults = await Promise.allSettled(
+        programNames.map((name, index) => {
+            // Add a small staggered delay before starting each uninstall
+            // This helps prevent simultaneous registry queries that could conflict
+            const staggerDelay = Math.floor(Math.random() * 200) + (index * 50);
+
+            return new Promise<UninstallResult>((resolve) => {
+                setTimeout(async () => {
+                    try {
+                        const result = await uninstallSingle(name, options);
+                        resolve(result);
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    } catch (error: any) {
+                        // Catch any errors that weren't handled by uninstallSingle
+                        onStatusChange?.(name, 'failed');
+                        resolve({
+                            name,
+                            success: false,
+                            error: error?.message || String(error) || 'Uninstallation failed with unknown error',
+                        });
+                    }
+                }, staggerDelay);
+            });
+        }),
+    );
+
+    return settledResults.map((result, index) => {
+        if (result.status === 'fulfilled') {
+            return result.value;
+        } else {
+            const programName = programNames[index];
+            onStatusChange?.(programName || 'unknown', 'failed');
+            // Extract error message from rejection reason
+            const errorMessage = result.reason instanceof Error
+                ? result.reason.message
+                : typeof result.reason === 'string'
+                    ? result.reason
+                    : 'Uninstallation failed';
+            return {
+                name: programName || 'unknown',
+                success: false,
+                error: errorMessage,
+            };
+        }
+    });
+}
+
+/**
+ * Uninstalls all programs (with mode selection)
+ */
+export async function uninstallAll(
+    programNames: string[],
+    options: UninstallOptions = {},
+): Promise<UninstallResult[]> {
+    if (options.concurrent) {
+        return uninstallConcurrently(programNames, options);
+    } else {
+        return uninstallSequentially(programNames, options);
+    }
+}
+
+/**
  * Lists installed programs (simplified - returns program names)
  */
 export async function listInstalledPrograms(
@@ -400,7 +705,6 @@ export async function listInstalledPrograms(
             .map(line => line.trim())
             .filter(line => line.length > 0);
 
-        // Remove duplicates (same program can appear in both 32-bit and 64-bit registry)
         const uniquePrograms = Array.from(new Set(programs));
 
         return pattern

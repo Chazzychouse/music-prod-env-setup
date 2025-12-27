@@ -18,15 +18,10 @@ function startREPL(): void {
     });
 }
 
-/**
- * Main entry point - supports both REPL mode and single command mode
- */
 async function main(): Promise<void> {
     // If command line arguments are provided, run in single-command mode
     const command = process.argv[2];
-    // Process arguments - remove any PowerShell escape characters (^) that might have been added
-    const rawArgs = process.argv.slice(3);
-    const args = rawArgs.map(arg => arg.replace(/\^/g, ''));
+    const args = stripPowerShellEscapeCharacters();
 
     if (command) {
         // Single command mode (backward compatibility)
@@ -36,6 +31,11 @@ async function main(): Promise<void> {
         // REPL mode - default behavior
         startREPL();
     }
+}
+
+function stripPowerShellEscapeCharacters(): string[] {
+    const rawArgs = process.argv.slice(3);
+    return rawArgs.map(arg => arg.replace(/\^/g, ''));
 }
 
 main().catch(console.error);

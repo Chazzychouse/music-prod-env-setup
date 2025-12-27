@@ -91,7 +91,7 @@ export function createProgressMultiBar(props: IProgressBarProps): cliProgress.Mu
 // Status Display
 // ============================================================================
 
-type Status = 'pending' | 'installing' | 'uninstalling' | 'completed' | 'failed';
+type Status = 'pending' | 'installing' | 'uninstalling' | 'completed' | 'failed' | 'skipped';
 
 interface StatusInfo {
     status: Status;
@@ -149,6 +149,9 @@ export class StatusDisplay {
             } else if (status.status === 'failed') {
                 icon = '✗';
                 text = 'Failed';
+            } else if (status.status === 'skipped') {
+                icon = '⊘';
+                text = 'Already Installed';
             }
 
             const prefix = total > 1 ? `[${index + 1}/${total}]` : '';
@@ -210,6 +213,9 @@ export class StatusDisplay {
             } else if (status.status === 'failed') {
                 icon = '✗';
                 text = 'Failed';
+            } else if (status.status === 'skipped') {
+                icon = '⊘';
+                text = 'Already Installed';
             }
 
             const prefix = total > 1 ? `[${index + 1}/${total}]` : '';

@@ -5,7 +5,7 @@ import {
     uninstallAllMatching,
     listInstalled,
 } from './commands';
-import urls from '../data/urls.json';
+import urls from '../data/urls';
 
 // ============================================================================
 // Command Router
@@ -55,6 +55,7 @@ export async function executeCommand(command: string, args: string[]): Promise<b
                     timeout: flagArgs.includes('--timeout')
                         ? parseInt(flagArgs[flagArgs.indexOf('--timeout') + 1]) || 300000
                         : 300000,
+                    concurrent: flagArgs.includes('--concurrent') || flagArgs.includes('-c'),
                 });
                 return true;
 
@@ -129,9 +130,11 @@ Commands:
                           Usage: uninstall [pattern] [options]
                           Options:
                             [pattern]           Optional pattern to filter which programs to uninstall
+                            --concurrent, -c    Uninstall concurrently instead of sequentially
                             --no-silent         Show uninstaller UI
                             --timeout <ms>      Set timeout in milliseconds
                           Example: uninstall "fl studio"  (uninstalls only programs matching "fl studio")
+                          Example: uninstall --concurrent (uninstalls all programs concurrently)
                           Example: uninstall              (uninstalls all programs matching installedAppNames)
 
   list-installed, li      List installed programs
