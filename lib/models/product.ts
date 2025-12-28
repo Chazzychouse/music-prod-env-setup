@@ -24,4 +24,17 @@ export type Product = {
      * or when needing to install multiple files.
      */
     installerPaths?: string[];
+
+    /** 
+     * Path to an executable file that indicates the product is installed.
+     * If this file exists, the product will be considered installed.
+     * Used for products that may not appear in Windows registry.
+     */
+    installedExecutablePath?: string;
+
+    /** 
+     * Direct path to the uninstaller executable.
+     * If provided, this will be used for uninstallation instead of registry lookup.
+     */
+    uninstallerPath?: string;
 }
