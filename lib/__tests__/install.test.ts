@@ -1,4 +1,5 @@
-import { executeProcess, executeInstaller, installSingle, installSequentially, installConcurrently, installAll, InstallItem } from '../install';
+import { executeProcess, executeInstaller, installSingle, installSequentially, installConcurrently, installAll } from '../install';
+import { InstallItem } from '../models';
 import { IProcessExecutor } from '../interfaces';
 
 describe('install', () => {
@@ -80,10 +81,8 @@ describe('install', () => {
 
             const promise = executeProcess('test.exe', [], { timeout: 50 }, mockProcessExecutor);
 
-            // Fast-forward time to trigger timeout
             jest.advanceTimersByTime(50);
 
-            // Use runAllTimersAsync to ensure timeout callback executes
             await jest.runAllTimersAsync();
 
             const result = await promise;
@@ -100,7 +99,6 @@ describe('install', () => {
             const mockProcess: { on: jest.Mock<any, any> } = {
                 on: jest.fn((event: string, callback: (code?: number) => void) => {
                     if (event === 'close') {
-                        // Use fake timer to delay close
                         setTimeout(() => callback(0), 150);
                     }
                     return mockProcess;
@@ -112,15 +110,12 @@ describe('install', () => {
             const onProgress = jest.fn();
             const promise = executeProcess('test.exe', [], { onProgress, timeout: 1000 }, mockProcessExecutor);
 
-            // Fast-forward to allow progress interval to fire (runs every 100ms)
             jest.advanceTimersByTime(120);
 
             expect(onProgress).toHaveBeenCalled();
 
-            // Fast-forward to complete the process (remaining 30ms)
             jest.advanceTimersByTime(30);
 
-            // Use runAllTimersAsync to ensure all pending timers complete
             await jest.runAllTimersAsync();
 
             await promise;
@@ -284,7 +279,6 @@ describe('install', () => {
             const mockProcess: { on: jest.Mock<any, any> } = {
                 on: jest.fn((event: string, callback: (code?: number) => void) => {
                     if (event === 'close') {
-                        // Use fake timer to delay close
                         setTimeout(() => callback(0), 150);
                     }
                     return mockProcess;
@@ -299,15 +293,12 @@ describe('install', () => {
                 onProgress,
             });
 
-            // Fast-forward to allow progress interval to fire (runs every 100ms)
             jest.advanceTimersByTime(120);
 
             expect(onProgress).toHaveBeenCalled();
 
-            // Fast-forward to complete the process (remaining 30ms)
             jest.advanceTimersByTime(30);
 
-            // Use runAllTimersAsync to ensure all pending timers complete
             await jest.runAllTimersAsync();
 
             await promise;

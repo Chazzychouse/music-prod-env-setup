@@ -4,7 +4,7 @@ jest.mock('readline', () => ({
     createInterface: mockCreateInterface,
 }));
 
-import { parseCommand, createREPL, REPLOptions } from '../cli';
+import { parseCommand, createChatLoop, ChatLoopOptions } from '../cli';
 import * as readline from 'readline';
 
 describe('cli', () => {
@@ -108,7 +108,7 @@ describe('cli', () => {
         });
     });
 
-    describe('createREPL', () => {
+    describe('createChatLoop', () => {
         let mockRl: any;
         let originalExit: typeof process.exit;
         let exitSpy: jest.SpyInstance;
@@ -158,7 +158,7 @@ describe('cli', () => {
 
         it('should create a readline interface with default prompt', () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             expect(mockCreateInterface).toHaveBeenCalledWith({
                 input: process.stdin,
@@ -170,7 +170,7 @@ describe('cli', () => {
 
         it('should create a readline interface with custom prompt', () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor, { prompt: 'custom> ' });
+            createChatLoop(commandExecutor, { prompt: 'custom> ' });
 
             expect(mockCreateInterface).toHaveBeenCalledWith({
                 input: process.stdin,
@@ -181,7 +181,7 @@ describe('cli', () => {
 
         it('should display welcome message if provided', () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor, { welcomeMessage: 'Welcome!' });
+            createChatLoop(commandExecutor, { welcomeMessage: 'Welcome!' });
 
             expect(consoleLogSpy).toHaveBeenCalledWith('Welcome!');
         });
@@ -189,14 +189,14 @@ describe('cli', () => {
         it('should not display welcome message if not provided', () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
             consoleLogSpy.mockClear();
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             expect(consoleLogSpy).not.toHaveBeenCalled();
         });
 
         it('should execute command when line is entered', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             // Simulate line input
             lineHandlers.forEach(handler => handler('install'));
@@ -211,7 +211,7 @@ describe('cli', () => {
 
         it('should parse command and arguments correctly', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('install app1 app2'));
 
@@ -222,7 +222,7 @@ describe('cli', () => {
 
         it('should handle quoted arguments', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('uninstall "FL Studio"'));
 
@@ -233,7 +233,7 @@ describe('cli', () => {
 
         it('should continue loop when command executor returns true', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('help'));
             await new Promise(resolve => setImmediate(resolve));
@@ -247,7 +247,7 @@ describe('cli', () => {
 
         it('should exit loop when command executor returns false', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(false);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('exit'));
             await new Promise(resolve => setImmediate(resolve));
@@ -259,7 +259,7 @@ describe('cli', () => {
         it('should call onExit callback when REPL closes', () => {
             const commandExecutor = jest.fn().mockResolvedValue(false);
             const onExit = jest.fn();
-            createREPL(commandExecutor, { onExit });
+            createChatLoop(commandExecutor, { onExit });
 
             expect(() => {
                 closeHandlers.forEach(handler => handler());
@@ -269,7 +269,7 @@ describe('cli', () => {
 
         it('should not call onExit if not provided', () => {
             const commandExecutor = jest.fn().mockResolvedValue(false);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             // process.exit will still be called, but onExit won't be
             expect(() => {
@@ -281,7 +281,7 @@ describe('cli', () => {
             const commandExecutor = jest.fn().mockRejectedValue(new Error('Test error'));
             const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
 
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('install'));
             await new Promise(resolve => setImmediate(resolve));
@@ -296,7 +296,7 @@ describe('cli', () => {
 
         it('should handle multiple commands in sequence', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler('help'));
             await new Promise(resolve => setImmediate(resolve));
@@ -315,7 +315,7 @@ describe('cli', () => {
 
         it('should handle empty input', async () => {
             const commandExecutor = jest.fn().mockResolvedValue(true);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             lineHandlers.forEach(handler => handler(''));
             await new Promise(resolve => setImmediate(resolve));
@@ -325,7 +325,7 @@ describe('cli', () => {
 
         it('should exit process when REPL closes', () => {
             const commandExecutor = jest.fn().mockResolvedValue(false);
-            createREPL(commandExecutor);
+            createChatLoop(commandExecutor);
 
             expect(() => {
                 closeHandlers.forEach(handler => handler());

@@ -1,4 +1,8 @@
 import * as readline from 'readline';
+import { ChatLoopOptions } from './models';
+
+export type { ChatLoopOptions };
+
 
 /**
  * Parses a command line string into command and arguments
@@ -10,7 +14,6 @@ export function parseCommand(input: string): { command: string; args: string[] }
         return { command: '', args: [] };
     }
 
-    // Simple parsing - split by spaces, handle quoted strings
     const parts: string[] = [];
     let current = '';
     let inQuotes = false;
@@ -38,22 +41,13 @@ export function parseCommand(input: string): { command: string; args: string[] }
 }
 
 /**
- * Options for creating a REPL interface
- */
-export interface REPLOptions {
-    prompt?: string;
-    welcomeMessage?: string;
-    onExit?: () => void;
-}
-
-/**
- * Creates and runs a REPL loop
+ * Creates and runs a chat loop
  * @param commandExecutor Function that executes commands and returns whether to continue
- * @param options Configuration options for the REPL
+ * @param options Configuration options for the chat loop
  */
-export function createREPL(
+export function createChatLoop(
     commandExecutor: (command: string, args: string[]) => Promise<boolean>,
-    options: REPLOptions = {},
+    options: ChatLoopOptions = {},
 ): void {
     const { prompt = '> ', welcomeMessage, onExit } = options;
 
@@ -79,12 +73,12 @@ export function createREPL(
                 return;
             }
 
-            console.log(); // Add blank line after command
+            console.log();
             rl.prompt();
         } catch (error) {
             console.error('Error:', error);
-            console.log(); // Add blank line after error
-            rl.prompt(); // Continue loop even on error
+            console.log();
+            rl.prompt();
         }
     });
 

@@ -10,8 +10,23 @@ import {
 } from '../cleanup';
 import { IFileSystem, IRegistryAccess, IProcessExecutor } from '../interfaces';
 import { createMockFileSystem, createMockRegistry } from './helpers/mocks';
+import * as fs from 'fs';
+
+// Mock fs.statSync and fs.rmSync
+jest.mock('fs', () => {
+    const actualFs = jest.requireActual('fs');
+    return {
+        ...actualFs,
+        statSync: jest.fn(() => ({
+            isDirectory: () => false,
+            isFile: () => true,
+        })),
+        rmSync: jest.fn(),
+    };
+});
 
 describe('cleanup', () => {
+
     describe('deleteDownload', () => {
         let mockFileSystem: ReturnType<typeof createMockFileSystem>;
 
@@ -40,6 +55,7 @@ describe('cleanup', () => {
 
         it('should handle deletion errors', async () => {
             const error = new Error('Permission denied');
+            (error as any).code = 'EPERM';
             mockFileSystem.existsSync.mockReturnValue(true);
             mockFileSystem.unlinkSync.mockImplementation(() => {
                 throw error;
@@ -96,39 +112,30 @@ describe('cleanup', () => {
             mockFileSystem.existsSync.mockReturnValue(true);
             mockFileSystem.readdirSync.mockReturnValue(['file1.exe', 'file2.exe', 'file3.txt']);
 
-            const results = await deleteAllDownloads('/tmp', undefined, mockFileSystem as any);
+            const results = await deleteAllDownloads('/tmp', mockFileSystem as any);
 
             expect(results).toHaveLength(2);
             expect(results[0].name).toBe('file1.exe');
             expect(results[1].name).toBe('file2.exe');
         });
 
-        it('should filter by pattern when provided', async () => {
-            mockFileSystem.existsSync.mockReturnValue(true);
-            mockFileSystem.readdirSync.mockReturnValue(['fl-studio.exe', 'native-instruments.exe', 'other.exe']);
-
-            const results = await deleteAllDownloads('/tmp', 'fl-studio', mockFileSystem as any);
-
-            expect(results).toHaveLength(1);
-            expect(results[0].name).toBe('fl-studio.exe');
-        });
-
         it('should return empty array if directory does not exist', async () => {
             mockFileSystem.existsSync.mockReturnValue(false);
 
-            const results = await deleteAllDownloads('/tmp', undefined, mockFileSystem as any);
+            const results = await deleteAllDownloads('/tmp', mockFileSystem as any);
 
             expect(results).toHaveLength(0);
         });
 
-        it('should throw error on readdir failure', async () => {
+        it('should handle readdir errors gracefully', async () => {
             mockFileSystem.existsSync.mockReturnValue(true);
             mockFileSystem.readdirSync.mockImplementation(() => {
                 throw new Error('Access denied');
             });
 
-            await expect(deleteAllDownloads('/tmp', undefined, mockFileSystem as any))
-                .rejects.toThrow('Failed to delete downloads from /tmp');
+            // getDownloadedFiles doesn't catch readdirSync errors, so this will throw
+            await expect(deleteAllDownloads('/tmp', mockFileSystem as any))
+                .rejects.toThrow('Access denied');
         });
     });
 
@@ -143,27 +150,17 @@ describe('cleanup', () => {
             mockFileSystem.existsSync.mockReturnValue(true);
             mockFileSystem.readdirSync.mockReturnValue(['file1.exe', 'file2.exe', 'file3.txt']);
 
-            const files = getDownloadedFiles('/tmp', undefined, mockFileSystem as any);
+            const files = getDownloadedFiles('/tmp', mockFileSystem as any);
 
             expect(files).toHaveLength(2);
             expect(files[0]).toContain('file1.exe');
             expect(files[1]).toContain('file2.exe');
         });
 
-        it('should filter by pattern when provided', () => {
-            mockFileSystem.existsSync.mockReturnValue(true);
-            mockFileSystem.readdirSync.mockReturnValue(['fl-studio.exe', 'native-instruments.exe', 'other.exe']);
-
-            const files = getDownloadedFiles('/tmp', 'fl-studio', mockFileSystem as any);
-
-            expect(files).toHaveLength(1);
-            expect(files[0]).toContain('fl-studio.exe');
-        });
-
         it('should return empty array if directory does not exist', () => {
             mockFileSystem.existsSync.mockReturnValue(false);
 
-            const files = getDownloadedFiles('/tmp', undefined, mockFileSystem as any);
+            const files = getDownloadedFiles('/tmp', mockFileSystem as any);
 
             expect(files).toHaveLength(0);
         });

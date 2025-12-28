@@ -1,26 +1,17 @@
-/**
- * Integration tests for main.ts CLI handlers
- * These tests verify the integration between modules without actually
- * executing real file operations, network requests, or process spawning.
- */
-
-import { downloadAll, DownloadItem } from '../download';
-import { installAll, InstallItem } from '../install';
+import { downloadAll } from '../download';
+import { DownloadItem, InstallItem } from '../models';
+import { installAll } from '../install';
 import { deleteAllDownloads, getDownloadedFiles, uninstallByName, listInstalledPrograms } from '../cleanup';
 import { StatusDisplay } from '../ui';
-import { IFileSystem, IHttpClient, IProcessExecutor, IRegistryAccess } from '../interfaces';
+import { IProcessExecutor } from '../interfaces';
 import { createMockFileSystem, createMockHttpClient, createMockRegistry } from './helpers/mocks';
 
-// Mock the modules
 jest.mock('../download');
 jest.mock('../install');
 jest.mock('../cleanup');
 jest.mock('../ui');
 
 describe('main.ts integration', () => {
-    // Since we're testing integration, we'll test the actual functions
-    // that main.ts uses, but with mocked dependencies
-
     describe('downloadAndInstall flow', () => {
         let mockFileSystem: ReturnType<typeof createMockFileSystem>;
         let mockHttpClient: ReturnType<typeof createMockHttpClient>;
@@ -72,7 +63,6 @@ describe('main.ts integration', () => {
 
             mockFileSystem.createWriteStream.mockReturnValue(writeStream as any);
 
-            // Mock downloadAll
             (downloadAll as jest.Mock).mockResolvedValue({
                 successful: [
                     { name: 'app1', path: '/tmp/app1.exe', downloadSuccess: true, error: undefined },
@@ -81,7 +71,6 @@ describe('main.ts integration', () => {
                 failed: [],
             });
 
-            // Mock installAll
             const mockProcess: { on: jest.Mock<any, any> } = {
                 on: jest.fn((event: string, callback: (code?: number) => void) => {
                     if (event === 'close') {
@@ -98,7 +87,6 @@ describe('main.ts integration', () => {
                 { name: 'app2', path: '/tmp/app2.exe', installSuccess: true, error: undefined },
             ]);
 
-            // Execute the flow
             const downloadResult = await downloadAll(items, {
                 downloadDir: '/tmp',
                 fileSystem: mockFileSystem as any,
@@ -160,24 +148,10 @@ describe('main.ts integration', () => {
                 { name: 'file2.exe', path: '/tmp/file2.exe', deleted: true },
             ]);
 
-            const results = await deleteAllDownloads('/tmp', undefined, mockFileSystem as any);
+            const results = await deleteAllDownloads('/tmp', mockFileSystem as any);
 
             expect(results).toHaveLength(2);
             expect(results.every(r => r.deleted)).toBe(true);
-        });
-
-        it('should filter downloads by pattern', async () => {
-            mockFileSystem.existsSync.mockReturnValue(true);
-            mockFileSystem.readdirSync.mockReturnValue(['fl-studio.exe', 'other.exe']);
-
-            (deleteAllDownloads as jest.Mock).mockResolvedValue([
-                { name: 'fl-studio.exe', path: '/tmp/fl-studio.exe', deleted: true },
-            ]);
-
-            const results = await deleteAllDownloads('/tmp', 'fl-studio', mockFileSystem as any);
-
-            expect(results).toHaveLength(1);
-            expect(results[0].name).toBe('fl-studio.exe');
         });
     });
 
@@ -198,7 +172,7 @@ describe('main.ts integration', () => {
                 '/tmp/file2.exe',
             ]);
 
-            const files = getDownloadedFiles('/tmp', undefined, mockFileSystem as any);
+            const files = getDownloadedFiles('/tmp', mockFileSystem as any);
 
             expect(files).toHaveLength(2);
             expect(files[0]).toContain('file1.exe');

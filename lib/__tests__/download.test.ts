@@ -1,5 +1,6 @@
-import { downloadFile, downloadSingle, downloadAll, DownloadItem } from '../download';
-import { IFileSystem, IHttpClient, IProgressBarFactory } from '../interfaces';
+import { downloadFile, downloadSingle, downloadAll } from '../download';
+import { DownloadItem } from '../models';
+import { IProgressBarFactory } from '../interfaces';
 import { createMockFileSystem, createMockHttpClient } from './helpers/mocks';
 
 describe('download', () => {
@@ -18,7 +19,6 @@ describe('download', () => {
             const mockStream: { on: jest.Mock<any, any>, pipe: jest.Mock<any, any> } = {
                 on: jest.fn((event: string, callback: (data?: any) => void) => {
                     if (event === 'data') {
-                        // Call immediately in next tick
                         setImmediate(() => callback(Buffer.from('test data')));
                     } else if (event === 'end') {
                         setImmediate(() => callback());
@@ -129,7 +129,6 @@ describe('download', () => {
 
             await downloadFile(url, outputPath, onProgress, mockFileSystem as any, mockHttpClient as any);
 
-            // Wait for async callbacks to complete
             await new Promise(resolve => setImmediate(resolve));
 
             expect(onProgress).toHaveBeenCalled();

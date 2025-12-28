@@ -1,55 +1,30 @@
-import { downloadAll, DownloadItem } from './download';
-import { installAll, InstallItem, listInstalledPlugins, removePlugins } from './install';
+import { downloadAll } from './download';
+import { installAll, listInstalledPlugins, removePlugins } from './install';
 import { deleteAllDownloads, getDownloadedFiles, uninstallAll, listInstalledPrograms } from './cleanup';
 import { StatusDisplay } from './ui';
-import urls from '../data/urls';
-
-// ============================================================================
-// Command Handler Types
-// ============================================================================
-
-export interface CLIOptions {
-    downloadDir?: string;
-    concurrent?: boolean;
-}
-
-// ============================================================================
-// Command Handlers
-// ============================================================================
+import { Product, InstallOptions, products, InstallItem, DownloadItem } from './models';
 
 /**
  * Downloads and installs all items from URLs
  */
 export async function downloadAndInstall(
     items: DownloadItem[],
-    options: CLIOptions = {},
+    options: InstallOptions = {},
 ): Promise<void> {
     const { downloadDir = 'C:\\Users\\ccart\\Downloads', concurrent = false } = options;
-
-    // Phase 1: Download all files
-    console.log('Starting downloads...\n');
     const { successful, failed } = await downloadAll(items, { downloadDir });
 
-    console.log('\nDownloads completed.');
-    console.log(`Successful: ${successful.length}, Failed: ${failed.length}`);
-
     if (successful.length === 0) {
-        console.log('No files downloaded successfully. Skipping installations.');
         return;
     }
 
-    // Phase 2: Install all successfully downloaded files
-    console.log('\nStarting installations...\n');
-
-    // Map download results to install items, including installedAppNames from urls.json
     const installItems: InstallItem[] = successful.map(d => {
-        // Find the corresponding item in urls.json to get installedAppNames
-        const urlItem = urls.urls.find(item => item.name === d.name);
+        const product = products.find(item => item.name === d.name);
         return {
             name: d.name,
             path: d.path,
-            installedAppNames: urlItem?.installedAppNames,
-            requiresManualInstallation: urlItem?.requiresManualInstallation ?? false,
+            installedAppNames: product?.installedAppNames,
+            requiresManualInstallation: product?.requiresManualInstallation ?? false,
         };
     });
     const display = new StatusDisplay(installItems);
@@ -67,7 +42,6 @@ export async function downloadAndInstall(
 
     display.finalize();
 
-    // Final reporting
     const successfulInstalls = installResults.filter(r => r.installSuccess).length;
     const failedInstalls = installResults.filter(r => !r.installSuccess).length;
 
@@ -83,12 +57,8 @@ export async function downloadAndInstall(
  */
 export async function cleanupDownloads(
     downloadDir: string,
-    pattern?: string,
 ): Promise<void> {
-    console.log(`Cleaning up downloads from ${downloadDir}...\n`);
-
-    const results = await deleteAllDownloads(downloadDir, pattern);
-
+    const results = await deleteAllDownloads(downloadDir);
     const successful = results.filter(r => r.deleted).length;
     const failed = results.filter(r => !r.deleted).length;
 
@@ -107,8 +77,6 @@ export async function cleanupDownloads(
  * Lists downloaded files
  */
 export async function listDownloads(downloadDir: string): Promise<void> {
-    console.log(`Downloaded files in ${downloadDir}:\n`);
-
     const files = getDownloadedFiles(downloadDir);
 
     if (files.length === 0) {
@@ -127,65 +95,33 @@ export async function listDownloads(downloadDir: string): Promise<void> {
  * Also removes plugins matching installedAppNames from all plugin directories
  */
 export async function uninstallAllMatching(
-    pattern?: string,
     options: { silent?: boolean; timeout?: number; concurrent?: boolean } = {},
 ): Promise<void> {
-    // Extract app names we care about from urls.json
-    const caredAboutNames = new Set<string>();
-    const urlItemMap = new Map<string, { installedAppNames?: string[] }>();
+    const relevantNames = new Set<string>();
 
-    urls.urls.forEach(item => {
-        if (item.installedAppNames && Array.isArray(item.installedAppNames)) {
-            item.installedAppNames.forEach(name => caredAboutNames.add(name));
-            // Map app names to their URL item
-            item.installedAppNames.forEach(appName => {
-                urlItemMap.set(appName.toLowerCase(), {
-                    installedAppNames: item.installedAppNames
-                });
-            });
+    products.forEach(product => {
+        if (product.installedAppNames && Array.isArray(product.installedAppNames)) {
+            product.installedAppNames.forEach(name => relevantNames.add(name));
         }
     });
 
-    // Get all installed programs
     const allPrograms = await listInstalledPrograms();
 
-    // Filter to only programs we care about
-    // Match if the program name exactly matches or contains a cared-about name
-    let programsToUninstall = allPrograms.filter(program =>
-        Array.from(caredAboutNames).some(caredName => {
+    const programsToUninstall = allPrograms.filter(program =>
+        Array.from(relevantNames).some(relevantName => {
             const programLower = program.toLowerCase();
-            const caredNameLower = caredName.toLowerCase();
-            return programLower === caredNameLower || programLower.includes(caredNameLower);
+            const relevantNameLower = relevantName.toLowerCase();
+            return programLower === relevantNameLower || programLower.includes(relevantNameLower);
         })
     );
 
-    // Apply pattern filter if provided
-    if (pattern) {
-        programsToUninstall = programsToUninstall.filter(name =>
-            name.toLowerCase().includes(pattern.toLowerCase())
-        );
-    }
-
-    // Collect plugin names to remove (using the same installedAppNames)
     const pluginsToRemove = new Set<string>();
 
-    // Check for installed plugins that match our cared-about names
-    // This handles cases where only plugins are installed (no registry entry)
-    if (caredAboutNames.size > 0) {
-        const installedPlugins = await listInstalledPlugins(Array.from(caredAboutNames));
-        if (pattern) {
-            // If pattern provided, filter by pattern
-            installedPlugins.forEach(pluginName => {
-                if (pluginName.toLowerCase().includes(pattern.toLowerCase())) {
-                    pluginsToRemove.add(pluginName);
-                }
-            });
-        } else {
-            // If no pattern, add all installed plugins we care about
-            installedPlugins.forEach(pluginName => {
-                pluginsToRemove.add(pluginName);
-            });
-        }
+    if (relevantNames.size > 0) {
+        const installedPlugins = await listInstalledPlugins(Array.from(relevantNames));
+        installedPlugins.forEach(pluginName => {
+            pluginsToRemove.add(pluginName);
+        });
     }
 
     if (programsToUninstall.length === 0 && pluginsToRemove.size === 0) {
@@ -209,7 +145,6 @@ export async function uninstallAllMatching(
         console.log('');
     }
 
-    // Create display for all items (programs + plugins)
     const allItems = [
         ...programsToUninstall.map(name => ({ name })),
         ...Array.from(pluginsToRemove).map(name => ({ name }))
@@ -217,7 +152,6 @@ export async function uninstallAllMatching(
     const display = new StatusDisplay(allItems);
     display.start();
 
-    // Uninstall all programs (sequential or concurrent based on option)
     const results = await uninstallAll(programsToUninstall, {
         silent: options.silent ?? true,
         timeout: options.timeout ?? 300000,
@@ -227,19 +161,16 @@ export async function uninstallAllMatching(
         },
     });
 
-    // Remove plugins
     let pluginResults: { removed: number; errors: string[] } = { removed: 0, errors: [] };
     if (pluginsToRemove.size > 0) {
         pluginResults = await removePlugins(Array.from(pluginsToRemove));
         pluginsToRemove.forEach(pluginName => {
-            // Check if this specific plugin was removed (simplified - if any were removed, mark as completed)
             display.setStatus(pluginName, pluginResults.removed > 0 ? 'completed' : 'failed');
         });
     }
 
     display.finalize();
 
-    // Final reporting
     const successful = results.filter(r => r.success).length;
     const failed = results.filter(r => !r.success).length;
 
@@ -268,34 +199,26 @@ export async function uninstallAllMatching(
 
 /**
  * Lists installed programs matching a pattern
- * Only shows programs that are in urls.json by default
- * Use '--all' or '*' as pattern to show all installed programs
  */
 export async function listInstalled(pattern?: string): Promise<void> {
     console.log('Installed programs:\n');
 
-    // Get all installed programs from registry
     const allPrograms = await listInstalledPrograms();
 
-    // Check if user wants to see all programs
     const showAll = pattern === '--all' || pattern === '*';
 
     let programs: string[];
 
     if (showAll) {
-        // Show all programs without filtering
         programs = allPrograms;
     } else {
-        // Extract app names we care about from urls.json
         const caredAboutNames = new Set<string>();
-        urls.urls.forEach(item => {
+        products.forEach((item: Product) => {
             if (item.installedAppNames && Array.isArray(item.installedAppNames)) {
                 item.installedAppNames.forEach(name => caredAboutNames.add(name));
             }
         });
 
-        // Filter to only show programs we care about from registry
-        // Match if the program name exactly matches or contains a cared-about name
         programs = allPrograms.filter(program =>
             Array.from(caredAboutNames).some(caredName => {
                 const programLower = program.toLowerCase();
@@ -304,16 +227,13 @@ export async function listInstalled(pattern?: string): Promise<void> {
             })
         );
 
-        // Also check for plugins and add them to the list
         if (caredAboutNames.size > 0) {
             const installedPlugins = await listInstalledPlugins(Array.from(caredAboutNames));
-            // Add plugin names to the programs list
             installedPlugins.forEach(pluginName => {
                 programs.push(pluginName);
             });
         }
 
-        // Apply pattern filter if provided (and not --all or *)
         if (pattern) {
             programs = programs.filter(name => name.toLowerCase().includes(pattern.toLowerCase()));
         }

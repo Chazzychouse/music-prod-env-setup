@@ -2,52 +2,8 @@ import { IProcessExecutor, NodeProcessExecutor } from './interfaces/process-inte
 import { listInstalledPrograms } from './cleanup';
 import * as fs from 'fs';
 import * as path from 'path';
+import { InstallItem, InstallResult, InstallationTaskOptions, ProcessOptions, ProcessResponse } from './models';
 
-// ============================================================================
-// Install Types & Interfaces
-// ============================================================================
-
-export interface InstallItem {
-    name: string;
-    path: string | string[]; // Single path or array of paths for multiple installers
-    installedAppNames?: string[]; // Names to check in registry and plugin directories (VST, AAX, etc.) for verification
-    requiresManualInstallation?: boolean;
-}
-
-export interface InstallResult {
-    name: string;
-    path: string | string[]; // Single path or array of paths for multiple installers
-    installSuccess: boolean;
-    error: Error | undefined;
-}
-
-export interface InstallOptions {
-    silent?: boolean;
-    timeout?: number;
-    concurrent?: boolean;
-    onProgress?: (name: string, elapsed: number) => void;
-    onStatusChange?: (name: string, status: 'pending' | 'installing' | 'completed' | 'failed' | 'skipped') => void;
-    // Dependency injection for testing
-    processExecutor?: IProcessExecutor;
-}
-
-interface ExecuteOptions {
-    silent?: boolean;
-    timeout?: number;
-    args?: string[];
-    elevated?: boolean;
-    onProgress?: (elapsed: number) => void;
-}
-
-export type ProcessResponse = {
-    success: boolean;
-    exitCode: number | null;
-    error?: string;
-}
-
-// ============================================================================
-// Shared Process Execution
-// ============================================================================
 
 /**
  * Low-level function to execute a process (installer/uninstaller)
@@ -56,7 +12,7 @@ export type ProcessResponse = {
 export async function executeProcess(
     executablePath: string,
     args: string[],
-    options: ExecuteOptions = {},
+    options: ProcessOptions = {},
     processExecutor?: IProcessExecutor,
 ): Promise<ProcessResponse> {
     const { silent = true, timeout = 300000, onProgress } = options;
@@ -106,7 +62,6 @@ export async function executeProcess(
             if (timeoutId) clearTimeout(timeoutId);
             if (progressInterval) clearInterval(progressInterval);
 
-            // Provide more helpful error messages for common issues
             let errorMessage = error.message;
             if (error.code === 'EACCES') {
                 errorMessage = `Access denied. This may require administrator privileges. Try running the command as administrator. (Original error: ${error.message})`;
@@ -142,13 +97,6 @@ export async function executeProcess(
  * flags for multiple installer types. The order matters - more specific flags first.
  */
 function getSilentArgs(): string[] {
-    // Comprehensive set of silent flags that work across different installer types
-    // /VERYSILENT - Most silent mode (Inno Setup, NSIS)
-    // /SP- - Suppress "This will install..." prompt (Inno Setup)
-    // /SUPPRESSMSGBOXES - Suppress all message boxes (Inno Setup)
-    // /NORESTART - Prevent restart prompts (Inno Setup)
-    // /SILENT - Standard silent mode (NSIS, InstallShield)
-    // /S - Minimal silent flag (NSIS, InstallShield, Wise)
     return ['/VERYSILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/SILENT', '/S'];
 }
 
@@ -159,85 +107,31 @@ function getSilentArgs(): string[] {
  */
 export async function executeInstaller(
     installerPath: string,
-    options: ExecuteOptions = {},
+    options: ProcessOptions = {},
     processExecutor?: IProcessExecutor,
 ): Promise<ProcessResponse> {
     const { silent = true, args = [] } = options;
 
-    // Check if this is an MSI file
     const isMsiFile = installerPath.toLowerCase().endsWith('.msi');
 
     if (isMsiFile) {
-        // MSI files must be executed using msiexec.exe
-        // msiexec.exe /i <path> /qn for silent installation
-        // /qn = quiet, no UI
-        // /qb = basic UI (progress bar only)
         const msiArgs = silent
             ? ['/i', installerPath, '/qn', '/norestart']  // Silent install
             : ['/i', installerPath, '/qb'];  // Show basic UI for manual installation
 
-        // Add any additional args provided
         const allArgs = [...msiArgs, ...args];
 
         return executeProcess('msiexec.exe', allArgs, options, processExecutor);
     }
 
-    // For non-MSI files, use the original logic
     if (!silent) {
         return executeProcess(installerPath, args, options, processExecutor);
     }
 
-    // Use comprehensive silent flags that work for most installers
-    // Most installers ignore flags they don't recognize, so including
-    // flags for multiple installer types is safe
     const silentArgs = getSilentArgs();
     const allArgs = [...silentArgs, ...args];
 
     return executeProcess(installerPath, allArgs, options, processExecutor);
-}
-
-/**
- * Recursively searches a directory for files matching plugin names
- * Returns true if any matching file is found
- */
-function searchRecursivelyForPlugin(
-    dirPath: string,
-    pluginNameLower: string,
-    maxDepth: number = 20
-): boolean {
-    if (maxDepth <= 0) {
-        return false;
-    }
-
-    try {
-        if (!fs.existsSync(dirPath)) {
-            return false;
-        }
-
-        const items = fs.readdirSync(dirPath, { withFileTypes: true });
-
-        for (const item of items) {
-            const itemPath = path.join(dirPath, item.name);
-            const itemNameLower = item.name.toLowerCase();
-
-            if (item.isFile()) {
-                // Check if the file name contains the plugin name
-                if (itemNameLower.includes(pluginNameLower)) {
-                    return true;
-                }
-            } else if (item.isDirectory()) {
-                // Recursively search subdirectories
-                if (searchRecursivelyForPlugin(itemPath, pluginNameLower, maxDepth - 1)) {
-                    return true;
-                }
-            }
-        }
-    } catch {
-        // Skip directories we can't read
-        return false;
-    }
-
-    return false;
 }
 
 /**
@@ -267,17 +161,14 @@ function findMatchingFilesRecursively(
             const itemNameLower = item.name.toLowerCase();
 
             if (item.isFile()) {
-                // Check if the file name contains the plugin name
                 if (itemNameLower.includes(pluginNameLower)) {
                     matchingFiles.push(itemPath);
                 }
             } else if (item.isDirectory()) {
-                // Recursively search subdirectories
                 matchingFiles.push(...findMatchingFilesRecursively(itemPath, pluginNameLower, maxDepth - 1));
             }
         }
     } catch {
-        // Skip directories we can't read
     }
 
     return matchingFiles;
@@ -288,11 +179,9 @@ function findMatchingFilesRecursively(
  * Defines all plugin types and their search directories
  */
 const PLUGIN_DIRECTORIES = [
-    // VST plugins
     'C:\\Program Files\\Common Files\\VST3',
     'C:\\Program Files\\Common Files\\VST2',
     'C:\\Program Files (x86)\\VSTPlugIns',
-    // AAX plugins
     'C:\\Program Files\\Common Files\\Avid\\Audio\\Plug-Ins',
 ];
 
@@ -318,20 +207,16 @@ export async function listInstalledPlugins(pluginNames: string[]): Promise<strin
             for (const pluginName of pluginNames) {
                 const pluginNameLower = pluginName.toLowerCase();
 
-                // Search recursively for matching plugin files
                 const matchingFiles = findMatchingFilesRecursively(pluginDir, pluginNameLower);
 
-                // Extract meaningful names from the found files
                 for (const filePath of matchingFiles) {
                     const fileName = path.basename(filePath);
                     const fileNameWithoutExt = path.parse(fileName).name;
-                    // Use the actual file name (without extension) instead of the configured plugin name
                     foundPlugins.add(fileNameWithoutExt);
                 }
             }
         }
     } catch (error) {
-        // If checking fails, return empty array
         return [];
     }
 
@@ -349,7 +234,6 @@ function removeEmptyDirectoriesRecursively(dirPath: string, maxDepth: number = 2
     try {
         const items = fs.readdirSync(dirPath, { withFileTypes: true });
 
-        // First, recursively process subdirectories
         for (const item of items) {
             if (item.isDirectory()) {
                 const subDirPath = path.join(dirPath, item.name);
@@ -357,17 +241,14 @@ function removeEmptyDirectoriesRecursively(dirPath: string, maxDepth: number = 2
             }
         }
 
-        // After processing subdirectories, check if this directory is now empty
         const remainingItems = fs.readdirSync(dirPath);
         if (remainingItems.length === 0) {
             try {
                 fs.rmdirSync(dirPath);
             } catch {
-                // Ignore errors - directory might not be empty or we might not have permissions
             }
         }
     } catch {
-        // Ignore errors when checking directories
     }
 }
 
@@ -396,7 +277,6 @@ export async function removePlugins(pluginNames: string[]): Promise<{ removed: n
             for (const pluginName of pluginNames) {
                 const pluginNameLower = pluginName.toLowerCase();
 
-                // Check root level for plugins (files)
                 for (const item of rootItems) {
                     if (item.isFile()) {
                         const itemNameLower = item.name.toLowerCase();
@@ -412,17 +292,14 @@ export async function removePlugins(pluginNames: string[]): Promise<{ removed: n
                     }
                 }
 
-                // Search recursively in all subdirectories
                 for (const item of rootItems) {
                     if (item.isDirectory()) {
                         const subDirPath = path.join(pluginDir, item.name);
                         const matchingFiles = findMatchingFilesRecursively(subDirPath, pluginNameLower);
 
                         if (matchingFiles.length > 0) {
-                            // Track the top-level directory for cleanup
                             topLevelDirsToCheck.add(subDirPath);
 
-                            // Remove all matching files
                             for (const filePath of matchingFiles) {
                                 try {
                                     fs.unlinkSync(filePath);
@@ -432,12 +309,9 @@ export async function removePlugins(pluginNames: string[]): Promise<{ removed: n
                                 }
                             }
 
-                            // For VST3 plugins, if the top-level directory name matches the plugin,
-                            // remove the entire directory (e.g., "TAL-Chorus-LX.vst3" folder)
                             const dirNameLower = item.name.toLowerCase();
                             if (dirNameLower.includes(pluginNameLower) && dirNameLower.endsWith('.vst3')) {
                                 try {
-                                    // Remove the entire directory recursively
                                     fs.rmSync(subDirPath, { recursive: true, force: true });
                                     removed++;
                                     topLevelDirsToCheck.delete(subDirPath); // Already removed
@@ -451,7 +325,6 @@ export async function removePlugins(pluginNames: string[]): Promise<{ removed: n
             }
         }
 
-        // Try to remove empty directories recursively
         for (const dirPath of topLevelDirsToCheck) {
             if (fs.existsSync(dirPath)) {
                 removeEmptyDirectoriesRecursively(dirPath);
@@ -483,17 +356,14 @@ async function checkPlugins(pluginNames: string[]): Promise<boolean> {
 async function verifyInstallation(
     installedAppNames?: string[]
 ): Promise<boolean> {
-    // Check registry if app names provided
     let registryCheck = false;
     if (installedAppNames && installedAppNames.length > 0) {
         try {
-            // Wait a brief moment for registry to update
             await new Promise(resolve => setTimeout(resolve, 1000));
 
             const allPrograms = await listInstalledPrograms();
             const allProgramsLower = allPrograms.map(p => p.toLowerCase());
 
-            // Check if any of the expected app names are found in the registry
             registryCheck = installedAppNames.some(appName => {
                 const appNameLower = appName.toLowerCase();
                 return allProgramsLower.some(program =>
@@ -501,15 +371,12 @@ async function verifyInstallation(
                 );
             });
         } catch (error) {
-            // If verification fails, assume not installed
             registryCheck = false;
         }
     }
 
-    // Check plugins in all directories (VST, AAX, etc.) using the same app names
     const pluginCheck = await checkPlugins(installedAppNames || []);
 
-    // Return true if any check passes
     return registryCheck || pluginCheck;
 }
 
@@ -518,14 +385,12 @@ async function verifyInstallation(
  */
 export async function installSingle(
     item: InstallItem,
-    options: InstallOptions = {},
+    options: InstallationTaskOptions = {},
 ): Promise<InstallResult> {
     const { silent = true, timeout = 300000, onProgress, onStatusChange, processExecutor } = options;
 
-    // Normalize path to array for consistent handling
     const installerPaths = Array.isArray(item.path) ? item.path : [item.path];
 
-    // Check if software is already installed before attempting installation
     if (item.installedAppNames && item.installedAppNames.length > 0) {
         const isAlreadyInstalled = await verifyInstallation(item.installedAppNames);
         if (isAlreadyInstalled) {
@@ -539,12 +404,9 @@ export async function installSingle(
         }
     }
 
-    // If manual installation is required, launch installers without silent flags
-    // and wait for the user to complete each wizard
     if (item.requiresManualInstallation) {
         onStatusChange?.(item.name, 'installing');
 
-        // Install each installer sequentially
         for (let i = 0; i < installerPaths.length; i++) {
             const installerPath = installerPaths[i];
             const result = await executeInstaller(installerPath, {
@@ -555,7 +417,6 @@ export async function installSingle(
                 },
             }, processExecutor);
 
-            // If this installer failed to launch, return error
             if (result.exitCode === null) {
                 onStatusChange?.(item.name, 'failed');
                 return {
@@ -567,10 +428,7 @@ export async function installSingle(
             }
         }
 
-        // After all installers complete (user closed all wizards),
-        // verify if the installation was successful
         if (item.installedAppNames && item.installedAppNames.length > 0) {
-            // Wait a moment for registry to update after installers close
             await new Promise(resolve => setTimeout(resolve, 2000));
             const isInstalled = await verifyInstallation(item.installedAppNames);
             if (isInstalled) {
@@ -584,13 +442,6 @@ export async function installSingle(
             }
         }
 
-        // For manual installations, be very lenient with exit codes
-        // Many installers spawn a launcher process that exits immediately while
-        // the actual installer wizard runs in a child process. We should only
-        // fail if there was an actual error event (like file not found, access denied, etc.)
-        // A non-zero exit code from a launcher doesn't necessarily mean failure.
-        // If all processes closed (exitCode !== null), assume the user will complete
-        // the installation through the wizard. Only fail if there was an error event.
         onStatusChange?.(item.name, 'completed');
         return {
             name: item.name,
@@ -601,7 +452,6 @@ export async function installSingle(
     }
 
     try {
-        // Install each installer sequentially
         let lastError: Error | undefined = undefined;
         for (let i = 0; i < installerPaths.length; i++) {
             const installerPath = installerPaths[i];
@@ -613,9 +463,7 @@ export async function installSingle(
                 },
             }, processExecutor);
 
-            // If installation reported failure or timeout, verify if it actually succeeded
             if (!result.success) {
-                // Check if the program is actually installed despite the failure report
                 if (item.installedAppNames && item.installedAppNames.length > 0) {
                     const isInstalled = await verifyInstallation(item.installedAppNames);
                     if (isInstalled) {
@@ -630,14 +478,11 @@ export async function installSingle(
                     }
                 }
 
-                // Store error but continue with other installers
                 lastError = new Error(result.error || `Installation failed for ${installerPath}`);
             }
         }
 
-        // If we had errors and verification didn't pass, mark as failed
         if (lastError) {
-            // Final verification check
             if (item.installedAppNames && item.installedAppNames.length > 0) {
                 const isInstalled = await verifyInstallation(item.installedAppNames);
                 if (isInstalled) {
@@ -668,7 +513,6 @@ export async function installSingle(
             error: undefined,
         };
     } catch (error) {
-        // On exception, also verify installation if app names are provided
         if (item.installedAppNames && item.installedAppNames.length > 0) {
             const isInstalled = await verifyInstallation(item.installedAppNames);
             if (isInstalled) {
@@ -697,7 +541,7 @@ export async function installSingle(
  */
 export async function installSequentially(
     items: InstallItem[],
-    options: InstallOptions = {},
+    options: InstallationTaskOptions = {},
 ): Promise<InstallResult[]> {
     const { onStatusChange } = options;
     const installResults: InstallResult[] = [];
@@ -719,7 +563,7 @@ export async function installSequentially(
  */
 export async function installConcurrently(
     items: InstallItem[],
-    options: InstallOptions = {},
+    options: InstallationTaskOptions = {},
 ): Promise<InstallResult[]> {
     const { onStatusChange } = options;
 
@@ -752,7 +596,7 @@ export async function installConcurrently(
  */
 export async function installAll(
     items: InstallItem[],
-    options: InstallOptions = {},
+    options: InstallationTaskOptions = {},
 ): Promise<InstallResult[]> {
     if (options.concurrent) {
         return installConcurrently(items, options);

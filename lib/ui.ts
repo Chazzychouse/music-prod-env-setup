@@ -1,19 +1,6 @@
 import * as cliProgress from 'cli-progress';
 import { IProgressBar, IProgressMultiBar, IProgressBarFactory } from './interfaces/progress-interface';
-
-// ============================================================================
-// Progress Bar
-// ============================================================================
-
-interface IProgressBarProps {
-    format?: string;
-    barCompleteChar?: string;
-    barIncompleteChar?: string;
-    hideCursor?: boolean;
-    clearOnComplete?: boolean;
-    stopOnComplete?: boolean;
-    preset?: cliProgress.Preset;
-}
+import { ProgressBarProps } from './models';
 
 /**
  * Wrapper for cli-progress progress bar to match our interface
@@ -62,7 +49,7 @@ class CliProgressMultiBarWrapper implements IProgressMultiBar {
  * Default progress bar factory implementation
  */
 export class CliProgressBarFactory implements IProgressBarFactory {
-    createMultiBar(options?: IProgressBarProps): IProgressMultiBar {
+    createMultiBar(options?: ProgressBarProps): IProgressMultiBar {
         const multibar = new cliProgress.MultiBar({
             format: options?.format ?? '{name} |{bar}| {percentage}% | {value}/{total} bytes | ETA: {eta}s',
             barCompleteChar: options?.barCompleteChar ?? '\u2588',
@@ -80,16 +67,12 @@ export class CliProgressBarFactory implements IProgressBarFactory {
  * Creates a multi-progress bar for displaying multiple download progress bars
  * @deprecated Use CliProgressBarFactory instead for better testability
  */
-export function createProgressMultiBar(props: IProgressBarProps): cliProgress.MultiBar {
+export function createProgressMultiBar(props: ProgressBarProps): cliProgress.MultiBar {
     const factory = new CliProgressBarFactory();
     const wrapper = factory.createMultiBar(props);
     // Return the underlying multibar for backward compatibility
     return (wrapper as any).multibar;
 }
-
-// ============================================================================
-// Status Display
-// ============================================================================
 
 type Status = 'pending' | 'installing' | 'uninstalling' | 'completed' | 'failed' | 'skipped';
 
@@ -121,8 +104,6 @@ export class StatusDisplay {
 
     private updateDisplay(): void {
         const total = this.items.length;
-        // Clear previous lines (move cursor up and clear each line)
-        // Only move up if we have items to display
         if (total > 0) {
             process.stdout.write('\x1b[' + total + 'A');
         }
@@ -155,12 +136,10 @@ export class StatusDisplay {
             }
 
             const prefix = total > 1 ? `[${index + 1}/${total}]` : '';
-            // Clear the line and write new content
             process.stdout.write('\x1b[K'); // Clear from cursor to end of line
             process.stdout.write(`  ${icon} ${prefix} ${item.name.padEnd(25)} ${text}\n`);
         });
 
-        // Only increment spinner if there are items still installing or uninstalling
         const hasInstalling = Array.from(this.statusLines.values()).some(s => s.status === 'installing' || s.status === 'uninstalling');
         if (hasInstalling) {
             this.spinnerIndex++;
@@ -168,7 +147,6 @@ export class StatusDisplay {
     }
 
     start(): void {
-        // Initial display
         const total = this.items.length;
         this.items.forEach((item, index) => {
             const prefix = total > 1 ? `[${index + 1}/${total}]` : '';
@@ -185,7 +163,6 @@ export class StatusDisplay {
             clearInterval(this.updateInterval);
             this.updateInterval = null;
         }
-        // Final update to show final status (no spinner)
         const total = this.items.length;
         if (total > 0) {
             process.stdout.write('\x1b[' + total + 'A');
@@ -200,11 +177,11 @@ export class StatusDisplay {
                 icon = '○';
                 text = 'Pending';
             } else if (status.status === 'installing') {
-                icon = '○'; // Use static icon instead of spinner
+                icon = '○';
                 const elapsed = status.elapsed ? Math.floor(status.elapsed / 1000) : 0;
                 text = `Installing... (${elapsed}s)`;
             } else if (status.status === 'uninstalling') {
-                icon = '○'; // Use static icon instead of spinner
+                icon = '○';
                 const elapsed = status.elapsed ? Math.floor(status.elapsed / 1000) : 0;
                 text = `Uninstalling... (${elapsed}s)`;
             } else if (status.status === 'completed') {
@@ -219,8 +196,7 @@ export class StatusDisplay {
             }
 
             const prefix = total > 1 ? `[${index + 1}/${total}]` : '';
-            // Clear the line and write new content
-            process.stdout.write('\x1b[K'); // Clear from cursor to end of line
+            process.stdout.write('\x1b[K');
             process.stdout.write(`  ${icon} ${prefix} ${item.name.padEnd(25)} ${text}\n`);
         });
 
