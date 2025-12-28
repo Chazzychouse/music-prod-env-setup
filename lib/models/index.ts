@@ -1,4 +1,4 @@
-export * from './product';
+export * from './_product';
 
 export * from './download';
 
