@@ -1,8 +1,10 @@
+import * as fs from 'fs';
 import { downloadAll } from './download';
 import { installAll, listInstalledPlugins, removePlugins } from './install';
-import { deleteAllDownloads, getDownloadedFiles, uninstallAll, listInstalledPrograms } from './cleanup';
+import { deleteAllDownloads, getDownloadedFiles, uninstallAll, listInstalledPrograms, uninstallByPath } from './cleanup';
 import { StatusDisplay } from './ui';
 import { Product, InstallOptions, products, InstallItem, DownloadItem } from './models';
+import { getProductsByName } from './products';
 
 /**
  * Downloads and installs all items from URLs
@@ -93,15 +95,31 @@ export async function listDownloads(downloadDir: string): Promise<void> {
 /**
  * Uninstalls all programs matching installedAppNames from urls.json
  * Also removes plugins matching installedAppNames from all plugin directories
+ * @param productNames Optional array of product names to uninstall. If not provided, uninstalls all enabled products.
  */
 export async function uninstallAllMatching(
-    options: { silent?: boolean; timeout?: number; concurrent?: boolean } = {},
+    options: { silent?: boolean; timeout?: number; concurrent?: boolean; productNames?: string[] } = {},
 ): Promise<void> {
-    const relevantNames = new Set<string>();
+    const productsToProcess = getProductsByName(options.productNames);
 
-    products.forEach(product => {
+    if (productsToProcess.length === 0) {
+        console.log('No products found to uninstall.');
+        return;
+    }
+
+    const relevantNames = new Set<string>();
+    const productUninstallerMap = new Map<string, string>(); // product name -> uninstaller path
+    const productExecutableMap = new Map<string, string>(); // product name -> executable path
+
+    productsToProcess.forEach(product => {
         if (product.installedAppNames && Array.isArray(product.installedAppNames)) {
             product.installedAppNames.forEach(name => relevantNames.add(name));
+        }
+        if (product.uninstallerPath) {
+            productUninstallerMap.set(product.name, product.uninstallerPath);
+        }
+        if (product.installedExecutablePath) {
+            productExecutableMap.set(product.name, product.installedExecutablePath);
         }
     });
 
@@ -115,6 +133,17 @@ export async function uninstallAllMatching(
         })
     );
 
+    const productsWithExecutables: Array<{ name: string; uninstallerPath?: string }> = [];
+    productExecutableMap.forEach((executablePath, productName) => {
+        if (fs.existsSync(executablePath)) {
+            const product = productsToProcess.find(p => p.name === productName);
+            productsWithExecutables.push({
+                name: productName,
+                uninstallerPath: product?.uninstallerPath,
+            });
+        }
+    });
+
     const pluginsToRemove = new Set<string>();
 
     if (relevantNames.size > 0) {
@@ -124,7 +153,7 @@ export async function uninstallAllMatching(
         });
     }
 
-    if (programsToUninstall.length === 0 && pluginsToRemove.size === 0) {
+    if (programsToUninstall.length === 0 && pluginsToRemove.size === 0 && productsWithExecutables.length === 0) {
         console.log('No matching programs or plugins found to uninstall.');
         return;
     }
@@ -133,6 +162,14 @@ export async function uninstallAllMatching(
         console.log(`Found ${programsToUninstall.length} program(s) to uninstall:\n`);
         programsToUninstall.forEach((program, index) => {
             console.log(`  ${index + 1}. ${program}`);
+        });
+        console.log('');
+    }
+
+    if (productsWithExecutables.length > 0) {
+        console.log(`Found ${productsWithExecutables.length} product(s) with executable paths to uninstall:\n`);
+        productsWithExecutables.forEach((product, index) => {
+            console.log(`  ${index + 1}. ${product.name}`);
         });
         console.log('');
     }
@@ -147,11 +184,13 @@ export async function uninstallAllMatching(
 
     const allItems = [
         ...programsToUninstall.map(name => ({ name })),
+        ...productsWithExecutables.map(p => ({ name: p.name })),
         ...Array.from(pluginsToRemove).map(name => ({ name }))
     ];
     const display = new StatusDisplay(allItems);
     display.start();
 
+    // Uninstall registry-based programs
     const results = await uninstallAll(programsToUninstall, {
         silent: options.silent ?? true,
         timeout: options.timeout ?? 300000,
@@ -160,6 +199,35 @@ export async function uninstallAllMatching(
             display.setStatus(name, status, elapsed);
         },
     });
+
+    // Uninstall products with direct uninstaller paths
+    const productResults = await Promise.all(
+        productsWithExecutables.map(async (product) => {
+            if (product.uninstallerPath && fs.existsSync(product.uninstallerPath)) {
+                display.setStatus(product.name, 'uninstalling');
+                const result = await uninstallByPath(product.uninstallerPath, {
+                    silent: options.silent ?? true,
+                    timeout: options.timeout ?? 300000,
+                    onProgress: (elapsed) => {
+                        display.setStatus(product.name, 'uninstalling', elapsed);
+                    },
+                });
+                display.setStatus(product.name, result.success ? 'completed' : 'failed');
+                return {
+                    name: product.name,
+                    success: result.success,
+                    error: result.error,
+                };
+            } else {
+                display.setStatus(product.name, 'failed');
+                return {
+                    name: product.name,
+                    success: false,
+                    error: `Uninstaller not found at ${product.uninstallerPath || 'specified path'}`,
+                };
+            }
+        })
+    );
 
     let pluginResults: { removed: number; errors: string[] } = { removed: 0, errors: [] };
     if (pluginsToRemove.size > 0) {
@@ -171,8 +239,9 @@ export async function uninstallAllMatching(
 
     display.finalize();
 
-    const successful = results.filter(r => r.success).length;
-    const failed = results.filter(r => !r.success).length;
+    const allResults = [...results, ...productResults];
+    const successful = allResults.filter(r => r.success).length;
+    const failed = allResults.filter(r => !r.success).length;
 
     console.log('\nUninstall completed.');
     console.log(`Successful: ${successful}, Failed: ${failed}`);
@@ -188,10 +257,10 @@ export async function uninstallAllMatching(
 
     if (failed > 0) {
         console.log('\nFailed uninstalls:');
-        results.filter(r => !r.success).forEach(r => {
+        allResults.filter(r => !r.success).forEach(r => {
             console.log(`  ✗ ${r.name}: ${r.error || 'Unknown error'}`);
         });
-        if (results.some(r => !r.success && r.error?.includes('Access denied'))) {
+        if (allResults.some(r => !r.success && r.error?.includes('Access denied'))) {
             console.log(`\nTip: Try running this command as administrator (right-click PowerShell and select "Run as Administrator").`);
         }
     }
@@ -200,10 +269,11 @@ export async function uninstallAllMatching(
 /**
  * Lists installed programs matching a pattern
  */
-export async function listInstalled(pattern?: string): Promise<void> {
+export async function listInstalled(pattern?: string, productNames?: string[]): Promise<void> {
     console.log('Installed programs:\n');
 
     const allPrograms = await listInstalledPrograms();
+    const productsToCheck = productNames ? getProductsByName(productNames) : getProductsByName();
 
     const showAll = pattern === '--all' || pattern === '*';
 
@@ -213,7 +283,7 @@ export async function listInstalled(pattern?: string): Promise<void> {
         programs = allPrograms;
     } else {
         const caredAboutNames = new Set<string>();
-        products.forEach((item: Product) => {
+        productsToCheck.forEach((item: Product) => {
             if (item.installedAppNames && Array.isArray(item.installedAppNames)) {
                 item.installedAppNames.forEach(name => caredAboutNames.add(name));
             }
@@ -226,6 +296,13 @@ export async function listInstalled(pattern?: string): Promise<void> {
                 return programLower === caredNameLower || programLower.includes(caredNameLower);
             })
         );
+
+        // Check for products with installedExecutablePath
+        productsToCheck.forEach((product: Product) => {
+            if (product.installedExecutablePath && fs.existsSync(product.installedExecutablePath)) {
+                programs.push(product.name);
+            }
+        });
 
         if (caredAboutNames.size > 0) {
             const installedPlugins = await listInstalledPlugins(Array.from(caredAboutNames));

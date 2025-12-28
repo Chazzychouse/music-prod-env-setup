@@ -10,12 +10,15 @@ const products: Product[] = [
         ]
     },
     {
-        name: "native-instruments",
+        name: "native-access",
         url: "https://www.native-instruments.com/fileadmin/downloads/Native-Access_2.exe",
         requiresManualInstallation: true,
         installedAppNames: [
-            "Native Instruments"
+            "Native Instruments",
+            "Native Access"
         ],
+        installedExecutablePath: "C:\\Program Files\\Native Instruments\\Native Access\\Native Access.exe",
+        uninstallerPath: "C:\\Program Files\\Native Instruments\\Native Access\\Uninstall Native Access.exe",
     },
     {
         name: "waves-central",
@@ -77,6 +80,21 @@ const products: Product[] = [
         ]
     }
 ];
+
+/**
+ * Returns products matching the provided names (case-insensitive)
+ * If names array is empty or undefined, returns all enabled products
+ */
+export function getProductsByName(productNames?: string[]): Product[] {
+    if (!productNames || productNames.length === 0) {
+        return products;
+    }
+
+    const namesLower = productNames.map(name => name.toLowerCase());
+    return products.filter(product =>
+        namesLower.includes(product.name.toLowerCase())
+    );
+}
 
 export default products;
 
