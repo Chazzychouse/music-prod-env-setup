@@ -3,6 +3,7 @@ import { downloadAll } from './download';
 import { installAll, listInstalledPlugins, removePlugins } from './install';
 import { deleteAllDownloads, getDownloadedFiles, uninstallAll, listInstalledPrograms, uninstallByPath } from './cleanup';
 import { StatusDisplay } from './ui';
+import { copySpliceToSamples } from './move';
 import { Product, InstallOptions, products, InstallItem, DownloadItem } from './models';
 import { getProductsByName } from './products';
 
@@ -326,3 +327,18 @@ export async function listInstalled(pattern?: string, productNames?: string[]): 
     });
 }
 
+export enum SampleSource {
+    Splice
+}
+
+export async function copySamples(src: SampleSource) {
+    switch (src) {
+        case SampleSource.Splice:
+            await copySpliceToSamples();
+            console.log('Copied Splice samples to samples directory');
+            break;
+        default:
+            console.error(`Unsupported sample source: ${src}`);
+            break;
+    }
+}

@@ -4,6 +4,8 @@ import {
     listDownloads,
     uninstallAllMatching,
     listInstalled,
+    copySamples,
+    SampleSource,
 } from './commands';
 import { Product } from './models';
 import { getProductsByName } from './products';
@@ -143,6 +145,16 @@ export async function executeCommand(command: string, args: string[]): Promise<b
                 console.clear();
                 return true;
 
+            case 'copy-samples':
+            case 'cs': {
+                if (hasHelpFlag(args)) {
+                    printCopySamplesHelp();
+                    return true;
+                }
+                await copySamples(SampleSource.Splice);
+                return true;
+            }
+
             default:
                 if (command) {
                     console.error(`Unknown command: ${command}`);
@@ -157,6 +169,7 @@ export async function executeCommand(command: string, args: string[]): Promise<b
         return true;
     }
 }
+
 
 /**
  * Prints help for install command
@@ -276,6 +289,19 @@ If product names are provided, only those products will be checked. Otherwise, a
 }
 
 /**
+ * Prints help for copy-samples command
+ */
+function printCopySamplesHelp(): void {
+  console.log(`
+  copy-samples, cs - Copy samples from Splice to samples directory
+  Usage:
+  copy-samples [source]
+  Examples:
+  copy-samples Splice
+  `);
+}
+
+/**
  * Prints help information for all available commands
  */
 export function printHelp(): void {
@@ -344,4 +370,3 @@ Examples (Interactive Mode):
   > list-installed "native"
 `);
 }
-
